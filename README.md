@@ -12,6 +12,34 @@ Working code for both lab sessions in this folder:
 
 Answers to the written lab questions are in [`ANSWERS.md`](ANSWERS.md).
 
+## Final demo (10/2026): hand gestures drive the CyberDog in Gazebo
+
+```
+webcam ──/image (30 fps)──▶ gesture_node ──/gesture/hand──▶ bridge_node ──LCM──▶ cyberdog_control ──▶ Gazebo 11
+           ROS 2 Jazzy        MediaPipe HandLandmarker        8-frame hold        (MPC + WBC, 500 Hz)
+                              21 landmarks + left/right        1.5 s cooldown
+                              joint angle + reach rule
+                              5-frame majority vote
+```
+
+- **Recognition**: MediaPipe HandLandmarker (Tasks API; falls back automatically because newer
+  MediaPipe dropped `mp.solutions`). Each finger counts as extended from its joint angle and its reach,
+  scaled by hand size, so it works near or far from the camera. A 5-frame majority vote smooths flicker.
+- **Bridge**: a gesture has to hold for 8 frames before it becomes a command, then a 1.5 s cooldown
+  stops repeated triggers. Commands go out over LCM on the same multicast channel the physical robot uses.
+- **Setup**: ROS 2 Jazzy runs on the Linux host (camera, MediaPipe, bridge). The CyberDog simulator
+  (ROS 2 Galactic + Gazebo 11 + LCM, from MiRoboticsLab's `cyberdog_sim`) runs in Docker.
+
+| Gesture | Robot |
+|---|---|
+| ✋ Open palm | walk |
+| ✊ Fist | stop and sit |
+| ✌️ Victory, left / right hand | turn left / right |
+| 👍 Thumbs up | stand on two legs |
+| ☝️ Point | shake paw |
+
+The sections below are the original lab setup (Ubuntu 20.04 VM + ROS 2 Galactic).
+
 ---
 
 ## 1. Install
@@ -151,15 +179,15 @@ ros2 run cyberdog_gesture_bridge bridge --ros-args -p dry_run:=false
 
 | Gesture | Action |
 |---|---|
-| OK | recovery stand |
+| Open palm | walk forward (stands up first if needed) |
+| Fist | stop and sit down |
+| Victory, left hand | turn left on the spot |
+| Victory, right hand | turn right on the spot |
 | Thumbs up | stand on two legs |
-| Thumbs down | lie down (pure damper) |
-| Victory | shake hands |
-| Open palm | stop, stand still |
-| Fist | walk forward |
-| Rock | turn in place |
-| Heart | dance |
-| Point | look up |
+| Point | shake hands |
+
+The bridge reads `/gesture/hand` (e.g. `Left:VICTORY`), which the recogniser
+publishes alongside `/gesture`, so it can tell the two victory signs apart.
 
 On the real dog the bridge must run **on the robot's NX board**, not in the VM:
 the LCM channel is `udpm://239.255.76.67`, a multicast group local to the

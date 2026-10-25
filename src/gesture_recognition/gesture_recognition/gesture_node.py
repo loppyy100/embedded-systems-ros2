@@ -5,6 +5,7 @@
 
 Publishes:
     /gesture              std_msgs/String     smoothed gesture of the primary hand
+    /gesture/hand         std_msgs/String     the same, with its hand: "Left:VICTORY"
     /gesture/annotated    sensor_msgs/Image   frame with skeleton, labels and effects
 
 Parameters (all settable with --ros-args -p name:=value):
@@ -18,6 +19,7 @@ Parameters (all settable with --ros-args -p name:=value):
     model_complexity      int    default 0      - 0 = lite model, 1 = full
     smoothing_window      int    default 5
     min_votes             int    default 3
+    model_path            str    default ""     - hand_landmarker.task, for mediapipe >= 0.10.30
 
 --------------------------------------------------------------------------
 Why there are three threads
@@ -118,6 +120,7 @@ class GestureNode(Node):
         self.declare_parameter("model_complexity", 0)
         self.declare_parameter("smoothing_window", 5)
         self.declare_parameter("min_votes", 3)
+        self.declare_parameter("model_path", "")
 
         topic = self.get_parameter("image_topic").value
         self.show_window = bool(self.get_parameter("show_window").value)
@@ -131,6 +134,7 @@ class GestureNode(Node):
             model_complexity=int(self.get_parameter("model_complexity").value),
             smoothing_window=int(self.get_parameter("smoothing_window").value),
             min_votes=int(self.get_parameter("min_votes").value),
+            model_path=self.get_parameter("model_path").value or None,
         )
 
         # cam2image publishes best-effort by default.  A RELIABLE subscriber
@@ -145,6 +149,7 @@ class GestureNode(Node):
             Image, topic, self.image_callback, sensor_qos)
 
         self.gesture_pub = self.create_publisher(String, "/gesture", 10)
+        self.hand_pub = self.create_publisher(String, "/gesture/hand", 10)
         self.annotated_pub = self.create_publisher(Image, "/gesture/annotated", 1)
 
         # --- handover slots -------------------------------------------------
@@ -212,9 +217,15 @@ class GestureNode(Node):
 
             annotated, gestures = self.pipeline.process(frame)
 
+            hand, gesture = self.pipeline.primary_hand(gestures)
             out = String()
-            out.data = self.pipeline.primary(gestures)
+            out.data = gesture
             self.gesture_pub.publish(out)
+            # One message carrying both, so a consumer never pairs a gesture
+            # with the hand from a different frame.
+            out = String()
+            out.data = "%s:%s" % (hand, gesture)
+            self.hand_pub.publish(out)
 
             if self.publish_annotated:
                 self.annotated_pub.publish(bgr_to_image_msg(annotated, msg.header))

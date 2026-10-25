@@ -14,6 +14,7 @@ from launch.actions import DeclareLaunchArgument
 from launch.conditions import IfCondition, UnlessCondition
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
 
 
 def generate_launch_description():
@@ -39,7 +40,9 @@ def generate_launch_description():
 
         Node(package="gesture_recognition", executable="image_source",
              name="image_source", output="screen",
-             parameters=[{"source": source}],
+             # Without value_type, launch turns "0" into an integer and the
+             # node, which declares `source` as a string, refuses it.
+             parameters=[{"source": ParameterValue(source, value_type=str)}],
              condition=UnlessCondition(use_cam2image)),
 
         Node(package="gesture_recognition", executable="gesture_node",

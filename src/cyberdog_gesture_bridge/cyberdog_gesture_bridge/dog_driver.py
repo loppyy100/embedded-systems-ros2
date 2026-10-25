@@ -32,8 +32,13 @@ MODE_PURE_DAMPER = 7        # limp / lie down safely
 MODE_LOCOMOTION = 11        # walking gaits, driven by vel_des
 MODE_RECOVERY_STAND = 12    # stand up from any posture
 MODE_POSE = 21              # body pose interpolation (rpy_des / pos_des)
-MODE_SHAKE_HAND = 62
+MODE_MOTION = 62            # a preinstalled motion sequence, chosen by gait_id
 MODE_TWOLEG_STAND = 64
+
+# gait_id values for MODE_MOTION, from MOTION_ID in the locomotion repo's
+# common/include/control_flags_release.hpp
+MOTION_SHAKE_HAND = 2       # "hi five right": sit, offer the right paw, shake (~7.5 s)
+MOTION_SIT_DOWN = 3         # sit and wiggle; stays sitting until the next command
 
 GAIT_TROT_MEDIUM = 3
 GAIT_TROT_FAST = 10
@@ -49,7 +54,9 @@ class DogDriver:
     def __init__(self, dry_run=True, logger=None):
         self.dry_run = dry_run
         self.log = logger or (lambda msg: print(msg))
-        self.cmd_msg = robot_control_cmd_lcmt()
+        # Nothing for the heartbeat to repeat until the first real command: an
+        # all-zero message is mode 0, which the board treats as an e-stop.
+        self.cmd_msg = None
         self.rec_msg = robot_control_response_lcmt()
         self._send_lock = Lock()
         self._delay_cnt = 0
@@ -101,7 +108,7 @@ class DogDriver:
     def _heartbeat_loop(self):
         while self._running:
             with self._send_lock:
-                if self._delay_cnt > 20:          # ~10 Hz at a 5 ms tick
+                if self.cmd_msg is not None and self._delay_cnt > 20:   # ~10 Hz at a 5 ms tick
                     self._lc_send.publish("robot_control_cmd", self.cmd_msg.encode())
                     self._delay_cnt = 0
                 self._delay_cnt += 1
@@ -157,10 +164,23 @@ class DogDriver:
         self.send(self._base_msg(MODE_PURE_DAMPER, 0, 4000), "lie_down")
 
     def shake_hand(self):
-        self.send(self._base_msg(MODE_SHAKE_HAND, 2, 0), "shake_hand")
-        self.wait_finish(MODE_SHAKE_HAND, 2)
+        self.send(self._base_msg(MODE_MOTION, MOTION_SHAKE_HAND, 0), "shake_hand")
+        # The simulator reports motions as pose control rather than mode 62,
+        # so the timeout - the motion's own length - is what normally ends this.
+        self.wait_finish(MODE_MOTION, MOTION_SHAKE_HAND, timeout=8.0)
+
+    def sit(self):
+        """Stop and sit down. The next command stands the dog back up first."""
+        self.halt()
+        time.sleep(0.5)
+        self.send(self._base_msg(MODE_MOTION, MOTION_SIT_DOWN, 0), "sit")
+        self.wait_finish(MODE_MOTION, MOTION_SIT_DOWN, timeout=3.0)
 
     def two_leg_stand(self):
+        if not self.dry_run and self.rec_msg.mode != MODE_RECOVERY_STAND:
+            # Only reachable from a plain stand - mid-walk the board answers
+            # "Cannot transition from 11 to 64".
+            self.stand()
         self.send(self._base_msg(MODE_TWOLEG_STAND, 0, 0), "two_leg_stand")
         self.wait_finish(MODE_TWOLEG_STAND, 0)
 
@@ -170,6 +190,10 @@ class DogDriver:
         duration=0 means "hold until the next command", which is also what lets
         a walk command interrupt an in-progress pose interpolation.
         """
+        if not self.dry_run and self.rec_msg.mode not in (MODE_LOCOMOTION, MODE_RECOVERY_STAND):
+            # The board only accepts locomotion from a standing posture
+            # ("Cannot transition from 0 to 11"), so get up first.
+            self.stand()
         msg = self._base_msg(MODE_LOCOMOTION, gait, 0)
         msg.vel_des = [float(vx), float(vy), float(vyaw)]
         self.send(msg, "walk")

@@ -100,6 +100,8 @@ def build_parser():
     parser.add_argument("--max-hands", type=int, default=2)
     parser.add_argument("--model-complexity", type=int, default=0, choices=(0, 1))
     parser.add_argument("--detection-confidence", type=float, default=0.6)
+    parser.add_argument("--model", default=None,
+                        help="hand_landmarker.task, for mediapipe >= 0.10.30")
     parser.add_argument("--record", default=None,
                         help="write the annotated video to this path")
     return parser
@@ -113,7 +115,8 @@ def main(argv=None):
     capture = Capture(parse_source(args.source), loop=args.loop)
     pipeline = HandPipeline(max_hands=args.max_hands,
                             model_complexity=args.model_complexity,
-                            detection_confidence=args.detection_confidence)
+                            detection_confidence=args.detection_confidence,
+                            model_path=args.model)
     writer = None
     last_printed = None
 

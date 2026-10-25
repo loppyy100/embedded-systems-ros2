@@ -3,8 +3,9 @@
     ros2 run cyberdog_gesture_bridge bridge                                 # dry run
     ros2 run cyberdog_gesture_bridge bridge --ros-args -p dry_run:=false    # real dog
 
-Subscribes to `/gesture` (std_msgs/String) from the gesture recogniser and
-sends the mapped locomotion command over LCM.
+Subscribes to `/gesture/hand` (std_msgs/String, e.g. "Left:VICTORY") from the
+gesture recogniser and sends the mapped locomotion command over LCM.  The hand
+matters for VICTORY only: left hand turns left, right hand turns right.
 
 --------------------------------------------------------------------------
 Safety, and why the debounce matters
@@ -34,18 +35,23 @@ from std_msgs.msg import String
 
 from .dog_driver import DogDriver
 
-# gesture label -> (driver method name, args, human description)
+# gesture (VICTORY split by hand) -> (driver method name, args, human description)
 GESTURE_ACTIONS = {
-    "OK":         ("stand",         (),              "stand up"),
-    "THUMB_UP":   ("two_leg_stand", (),              "stand on two legs"),
-    "THUMB_DOWN": ("lie_down",      (),              "lie down (pure damper)"),
-    "VICTORY":    ("shake_hand",    (),              "shake hands"),
-    "OPEN_PALM":  ("halt",          (),              "stop and stand still"),
-    "FIST":       ("walk",          (0.3, 0.0, 0.0), "walk forward"),
-    "ROCK":       ("walk",          (0.0, 0.0, 0.8), "turn in place"),
-    "HEART":      ("dance",         (),              "dance"),
-    "POINT":      ("nod",           (0.3,),          "look up"),
+    "OPEN_PALM":     ("walk",          (0.3, 0.0, 0.0),  "walk forward"),
+    "FIST":          ("sit",           (),               "stop and sit down"),
+    "VICTORY_LEFT":  ("walk",          (0.0, 0.0, 0.8),  "turn left"),
+    "VICTORY_RIGHT": ("walk",          (0.0, 0.0, -0.8), "turn right"),
+    "THUMB_UP":      ("two_leg_stand", (),               "stand on two legs"),
+    "POINT":         ("shake_hand",    (),               "shake hands"),
 }
+
+
+def action_key(data):
+    """"Left:VICTORY" -> "VICTORY_LEFT"; other gestures ignore the hand."""
+    hand, _, gesture = data.rpartition(":")
+    if gesture == "VICTORY" and hand:
+        return "VICTORY_LEFT" if hand.startswith("Left") else "VICTORY_RIGHT"
+    return gesture
 
 
 class GestureBridge(Node):
@@ -54,9 +60,9 @@ class GestureBridge(Node):
         super().__init__("cyberdog_gesture_bridge")
 
         self.declare_parameter("dry_run", True)
-        self.declare_parameter("gesture_topic", "/gesture")
+        self.declare_parameter("gesture_topic", "/gesture/hand")
         self.declare_parameter("hold_frames", 8)
-        self.declare_parameter("cooldown", 3.0)
+        self.declare_parameter("cooldown", 1.5)
         self.declare_parameter("enabled", True)
 
         self.dry_run = bool(self.get_parameter("dry_run").value)
@@ -87,7 +93,7 @@ class GestureBridge(Node):
             "%s->%s" % (g, spec[2]) for g, spec in sorted(GESTURE_ACTIONS.items())))
 
     def on_gesture(self, msg):
-        gesture = msg.data
+        gesture = action_key(msg.data)
 
         if gesture != self._candidate:
             self._candidate = gesture
